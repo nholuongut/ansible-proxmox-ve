@@ -1,0 +1,60 @@
+---
+
+
+# Create device vg
+- name: "Create LVM vg"
+  lvg:
+    vg: "{{ item.name }}"
+    pvs: "{{ item.devices | join (',') }}"
+    pesize: "{{ item.pesize }}"
+    state: present
+  with_items:
+    - "{{ proxmox_ve__storage_lvm }}"
+
+# Disable autoactivation of volumes
+- name: "Disable LVM auto volume activation"
+  lineinfile:
+    path: /etc/lvm/lvm.conf
+    regexp: "^auto_activation_volume_list ="
+    line: "auto_activation_volume_list = []"
+    insertafter: "^\t# auto_activation_volume_list = "
+    state: present
+    backup: yes
+
+# Check global_filter configuration
+- name: "Set LVM global_filter configuration"
+  lineinfile:
+    path: /etc/lvm/lvm.conf
+    regexp: "^([ \t]*global_filter =).*"
+    line: '\1 {{ proxmox_ve__lvm_global_filter }}'
+    state: present
+    backrefs: yes
+    backup: yes
+
+- name: "Check LVM storage existence"
+  command: pvesm list {{ item.name }}
+  ignore_errors: yes
+  changed_when: False
+  with_items:
+    - "{{ proxmox_ve__storage_lvm }}"
+  register: pve_lvm_list
+
+- name: "Add LVM storage configuration"
+  command: pvesm add lvm {{ item.item.name }} --vgname {{ item.item.name }}
+  when: item.rc != 0
+  loop: "{{ pve_lvm_list.results }}"
+
+# unfortunaly there is no way to find a change. rc value always 0 and no stdout
+- name: "Set LVM storage content property"
+  command: pvesm set {{ item.name }} --content images
+  with_items:
+    - "{{ proxmox_ve__storage_lvm }}"
+
+- name: "Set LVM storage shared property"
+  command: pvesm set {{ item.name }} --shared {{ item.shared }}
+  with_items:
+    - "{{ proxmox_ve__storage_lvm }}"
+
+- name: "Check proxmox storage status"
+  command: pvesm status
+  changed_when: False
